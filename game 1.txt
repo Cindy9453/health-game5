@@ -1,0 +1,243 @@
+const canvas = document.getElementById('game-canvas');
+const ctx = canvas.getContext('2d');
+
+const quizBank = [
+    { q: "成人每日建議飲水量是體重(kg)乘以多少？", options: ["10ml", "20ml", "30-35ml", "100ml"], correct: 2 },
+    { q: "下列哪種運動最能增進心肺功能？", options: ["看電視", "慢跑", "睡覺", "滑手機"], correct: 1 },
+    { q: "洗手「內外夾弓大立腕」，最後動作是？", options: ["指尖", "手背", "手心", "手腕"], correct: 3 },
+    { q: "預防近視，用眼30分鐘應休息多久？", options: ["1分鐘", "10分鐘", "30分鐘", "不必"], correct: 1 },
+    { q: "正確刷牙法「貝氏刷牙法」，刷毛與牙齒夾角？", options: ["15度", "45度", "90度", "180度"], correct: 1 }
+];
+
+let currentLevel = 0;
+let score = 0;
+let hp = 3;
+let doorOpen = false;
+let gameStarted = false;
+let platforms = [];
+let coins = [];
+let spikes = [];
+
+const player = {
+    x: 50, y: 80, vx: 0, vy: 0, size: 28,
+    onGround: false, speed: 4.8, jumpPower: -11.5, friction: 0.88
+};
+
+const keys = {};
+
+function generateMap() {
+    // 增加平台寬度，降低跳躍難度
+    platforms = [
+        { x: 0, y: 130, w: 350, h: 15 },
+        { x: 150, y: 280, w: 600, h: 15 },
+        { x: 0, y: 430, w: 800, h: 15 }
+    ];
+    coins = []; spikes = [];
+    
+    // 減少尖刺數量並縮小尺寸
+    for (let i = 0; i < 2; i++) {
+        const p = platforms[Math.floor(Math.random() * 2) + 1];
+        spikes.push({ 
+            x: p.x + 150 + Math.random() * (p.w - 300), 
+            y: p.y - 12, // 縮小高度
+            w: 18, // 縮小寬度
+            h: 12 
+        });
+    }
+
+    const data = quizBank[currentLevel];
+    data.options.forEach((opt, i) => {
+        let valid = false; let cx, cy;
+        while(!valid) {
+            const p = platforms[Math.floor(Math.random() * 3)];
+            cx = p.x + 40 + Math.random() * (p.w - 80);
+            cy = p.y - 45;
+            const nearSpike = spikes.some(s => Math.abs(s.x - cx) < 70);
+            const nearCoin = coins.some(c => Math.abs(c.x - cx) < 140);
+            if (!nearSpike && !nearCoin && cx < 760) valid = true;
+        }
+        coins.push({ x: cx, y: cy, text: opt, isCorrect: i === data.correct, collected: false });
+    });
+
+    player.x = 50; player.y = 80;
+    player.vx = 0; player.vy = 0;
+}
+
+function initLevel() {
+    doorOpen = false;
+    generateMap();
+    updateUI();
+}
+
+function updateUI() {
+    const box = document.getElementById('question-box');
+    box.innerText = quizBank[currentLevel].q;
+    box.style.backgroundColor = "#333";
+    document.getElementById('status-hp').innerText = "HP: " + "❤️".repeat(hp);
+    document.getElementById('status-score').innerText = "SCORE: " + score;
+}
+
+function loseHp() {
+    hp--;
+    if (hp <= 0) {
+        alert("遊戲結束！得分: " + score);
+        location.reload();
+    } else {
+        updateUI();
+        player.x = 50; player.y = 80;
+        player.vx = 0; player.vy = 0;
+    }
+}
+
+// 事件監聽與開始邏輯
+window.addEventListener('keydown', e => {
+    keys[e.code] = true;
+    startLoop();
+});
+window.addEventListener('keyup', e => keys[e.code] = false);
+
+function startLoop() {
+    if (!gameStarted) {
+        gameStarted = true;
+        initLevel();
+        requestAnimationFrame(gameLoop);
+    }
+}
+
+function setupMobile() {
+    const btns = { 'btn-left': 'ArrowLeft', 'btn-right': 'ArrowRight', 'btn-jump': 'ArrowUp' };
+    Object.keys(btns).forEach(id => {
+        const el = document.getElementById(id);
+        el.addEventListener('touchstart', (e) => { 
+            e.preventDefault();
+            keys[btns[id]] = true;
+            startLoop();
+        });
+        el.addEventListener('touchend', (e) => { 
+            e.preventDefault();
+            keys[btns[id]] = false; 
+        });
+    });
+}
+setupMobile();
+
+function gameLoop() {
+    update();
+    draw();
+    requestAnimationFrame(gameLoop);
+}
+
+function update() {
+    // 左右移動物理
+    if (keys['ArrowLeft']) player.vx = -player.speed;
+    else if (keys['ArrowRight']) player.vx = player.speed;
+    else player.vx *= player.friction; // 平滑減速
+
+    // 重力
+    player.vy += 0.6;
+    player.x += player.vx;
+    player.y += player.vy;
+
+    player.onGround = false;
+
+    // 平台碰撞判定 (增加偵測寬容度)
+    platforms.forEach(p => {
+        if (player.x + player.size > p.x && player.x < p.x + p.w &&
+            player.y + player.size > p.y && player.y + player.size < p.y + p.h + 10 && player.vy >= 0) {
+            player.y = p.y - player.size;
+            player.vy = 0;
+            player.onGround = true;
+        }
+    });
+
+    // 縮小後的尖刺碰撞 (加入內縮判定 Padding)
+    spikes.forEach(s => {
+        const pad = 6; 
+        if (player.x + player.size - pad > s.x && player.x + pad < s.x + s.w &&
+            player.y + player.size > s.y && player.y + pad < s.y + s.h) {
+            loseHp();
+        }
+    });
+
+    // 金幣/選項碰撞
+    coins.forEach(c => {
+        if (!c.collected && Math.abs(player.x + 14 - (c.x + 15)) < 30 && Math.abs(player.y + 14 - (c.y + 15)) < 35) {
+            c.collected = true;
+            if (c.isCorrect) {
+                doorOpen = true;
+                score += 100;
+                const box = document.getElementById('question-box');
+                box.innerText = "答對了！過關門已開啟！";
+                box.style.backgroundColor = "#2ecc71";
+            } else {
+                score = Math.max(0, score - 20);
+                loseHp();
+            }
+        }
+    });
+
+    // 邊界與摔落判定
+    if (player.y > 520) loseHp();
+    if (player.x < 0) player.x = 0;
+    if (player.x > 800 - player.size) player.x = 800 - player.size;
+
+    // 過關判定
+    if (doorOpen && player.x > 700 && player.y > 350) {
+        currentLevel++;
+        if (currentLevel < quizBank.length) {
+            initLevel();
+        } else {
+            alert("健康大師！你通關了！總分: " + score);
+            location.reload();
+        }
+    }
+}
+
+function draw() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 平台
+    ctx.fillStyle = "#333";
+    platforms.forEach(p => ctx.fillRect(p.x, p.y, p.w, p.h));
+    
+    // 尖刺
+    ctx.fillStyle = "#e74c3c";
+    spikes.forEach(s => {
+        ctx.beginPath();
+        ctx.moveTo(s.x, s.y + s.h);
+        ctx.lineTo(s.x + s.w / 2, s.y);
+        ctx.lineTo(s.x + s.w, s.y + s.h);
+        ctx.fill();
+    });
+
+    // 選項金幣
+    coins.forEach(c => {
+        if (!c.collected) {
+            ctx.fillStyle = "#f1c40f";
+            ctx.beginPath();
+            ctx.arc(c.x + 15, c.y + 15, 12, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.fillStyle = "#333";
+            ctx.font = "bold 14px Arial";
+            ctx.textAlign = "center";
+            ctx.fillText(c.text, c.x + 15, c.y - 12);
+        }
+    });
+
+    // 傳送門
+    if (doorOpen) {
+        ctx.fillStyle = "#ff7bac";
+        ctx.fillRect(740, 370, 40, 60);
+        ctx.fillStyle = "white";
+        ctx.font = "12px Arial";
+        ctx.textAlign = "center";
+        ctx.fillText("EXIT", 760, 360);
+    }
+
+    // 主角
+    ctx.fillStyle = "#4ea5ff";
+    ctx.fillRect(player.x, player.y, player.size, player.size);
+    ctx.strokeStyle = "#2980b9";
+    ctx.lineWidth = 2;
+    ctx.strokeRect(player.x, player.y, player.size, player.size);
+}
